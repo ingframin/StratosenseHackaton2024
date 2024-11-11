@@ -122,5 +122,3 @@ def fsk_modulate(data:bytearray,f1=1000,f2=2000):
 
 
 
-
-
