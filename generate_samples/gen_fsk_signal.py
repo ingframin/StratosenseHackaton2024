@@ -1,18 +1,31 @@
 from modulations import *
-from random import randint, choice
+from random import randint, choice, random
 import numpy as np
+from channel import *
+import shelve
 
-messages = [np.array([randint(0,255) for _ in range(32)]) for _ in range(8)]
-result = [fsk_modulate(m) for m in messages]
+class Message:
+    id = 0
+    def __init__(self, mod:callable) -> None:
+        self.id = Message.id
+        Message.id += 1
+        self.content = np.array([randint(0,255) for _ in range(512)])
+        self.modulated_content = mod(self.content)
+        self.variations = []
+    
+    def compute_variations(self,delays,attenuations,f=433.9e6):
+        for d,a in zip(delays,attenuations):
+            self.variations.append(add_delay(add_attenuation(self.modulated_content,a),d,f))
+    
 
+             
+messages = [Message(fsk_modulate) for _ in range(32)]
+delays = [0.1*random() for _ in range(512)]
+attenuations = [random() for _ in range(512)]
 
-result = []
+for m in messages:
+    m.compute_variations(delays,attenuations)
 
-for _ in range(256):
+with shelve.open('fsk_data') as dataset:
+    dataset["messages"] = messages
 
-    result.append(choice(messages))
-    result.append(np.zeros(randint(16,128)))
-
-final = np.concatenate(result)
-
-np.save('fsk_data.npy',final)
