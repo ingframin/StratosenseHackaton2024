@@ -3,6 +3,7 @@ from random import randint, choice, random
 import numpy as np
 from channel import *
 import shelve
+import gc
 
 class Message:
     id = 0
@@ -19,13 +20,18 @@ class Message:
     
 
              
-messages = [Message(fsk_modulate) for _ in range(32)]
-delays = [0.1*random() for _ in range(512)]
-attenuations = [random() for _ in range(512)]
+delays = [0.1*random() for _ in range(16)]
+attenuations = [random() for _ in range(16)]
 
-for m in messages:
-    m.compute_variations(delays,attenuations)
+with shelve.open("fsk_dataset") as dataset:
+    for i in range(1000):
+        m = Message(fsk_modulate)
+        print("Message: ",m.id)
+        m.compute_variations(delays,attenuations)
+        print("variations: ",len(m.variations))
+        dataset[str(m.id)] = m
+        gc.collect()
 
-with shelve.open('fsk_data') as dataset:
-    dataset["messages"] = messages
+
+
 
