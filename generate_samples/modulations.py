@@ -104,10 +104,10 @@ def byte2bits(byte,MSB_first=True):
     return bits
 
 
-def fsk_modulate(data:bytearray,f1=1000,f2=2000):
+def fsk_modulate(data:bytearray,f1=1000,f2=2000,steps = 8):
     result = []
-    carrier_f1 = gen_carrier(f1,f2*2)
-    carrier_f2 = gen_carrier(f2,f2*2)
+    carrier_f1 = gen_carrier(f1,steps)
+    carrier_f2 = gen_carrier(f2,steps)
     for d in data:
         bits = byte2bits(d)
         for b in bits:
