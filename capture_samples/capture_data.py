@@ -3,7 +3,7 @@ import numpy as np
 import h5py
 from time import sleep
 
-def connect_radio(addr='ip:pluto.local',buf_size=int(2**20),gain=33.0,frequency=2422.0,bandwidth=12.0,sample_rate=2.0):
+def connect_radio(addr='ip:pluto.local',buf_size=int(2**20),gain=33.0,frequency=2422.0,bandwidth=12.0,sample_rate=12.0):
     radio = adi.Pluto(addr)
     radio.gain_control_mode_chan0 = 'manual'
     radio.rx_buffer_size = buf_size    
