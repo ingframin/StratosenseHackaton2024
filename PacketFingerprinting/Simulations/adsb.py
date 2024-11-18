@@ -14,31 +14,17 @@ OUTPUT: The score of similarity,
 """
 
 
-class DataHandler:
-    def __init__(self,inputsize) -> None:
-        self.inputsize=inputsize
-        self.batchsize=4
-        
-    def get_dataset(self,nr):
-        data= np.random.random(size=(nr+1,self.inputsize,2))
-        ds  = tf.data.Dataset.from_tensor_slices((data[1:],data[1:],data[:-1]))
-        ds = ds.prefetch(tf.data.AUTOTUNE)
-        ds = ds.shuffle(ds.cardinality())
-        return ds.batch(self.batchsize)
-    
-
 
 def main(output_shape, i):
     ## Parameters
     input_shape=512
     
-
-    filepath= f'../Results/FSK_{output_shape}/Res_{i}/'
+    filepath= f'../Results/ADSB/ADSB_{output_shape}/Res_{i}/'
 
     ## Dataset 
-    ds=mlf.DataHandler.DataHandlerFranco('../Dataset/fsk_data.h5',input_shape=input_shape)
+    ds=mlf.DataHandler.DataHandlerMatthias('../Dataset/Training/',input_shape=input_shape)
     ## Model
-    model_base= mlf.Model.Base(input_shape=input_shape,output_shape=output_shape,nr_layers=4,name='Model')
+    model_base= mlf.Model.Base(input_shape=input_shape,output_shape=output_shape,nr_layers=6,name='Model')
     model = model_base.get_model()
     ## Training 
     train_model(model,ds,filepath)
@@ -57,7 +43,7 @@ def train_model(model,ds,filepath,epochs=100):
         filepath = filepath+'Training'+f'/model_weights_{model.name}'
         
 
-        opt = tf.optimizers.Adam(learning_rate=0.0001)
+        opt = tf.optimizers.Adam(learning_rate=0.001)
         model.compile(optimizer=opt,weighted_metrics=[])
         checkpoint = tf.keras.callbacks.ModelCheckpoint(
                                     filepath=filepath,
@@ -67,9 +53,9 @@ def train_model(model,ds,filepath,epochs=100):
                                     save_best_only=True,
                                     verbose=1, 
                                     restore_best_weights = True)
-        # es = tf.keras.callbacks.EarlyStopping(monitor='val_loss',min_delta=0.0001, patience=5,mode='auto')
+        # es = tf.keras.callbacks.EarlyStopping(monitor='val_loss',min_delta=0.001, patience=3,mode='auto')
         # history = model.fit(ds.train,validation_data=ds.val, epochs=epochs, 
-                        # callbacks=[es,checkpoint])
+        #                 callbacks=[es,checkpoint])
         history = model.fit(ds.train,validation_data=ds.val, epochs=epochs, 
                         callbacks=[checkpoint])
         with open(fn_hist, "w") as f:
@@ -79,18 +65,19 @@ def train_model(model,ds,filepath,epochs=100):
 
 def extact_th(model,ds,filepath=None):
     p,n= model.predict(ds.train)
-    th_range = np.arange(0,2,0.0001)
-    # select th for which the accuracy of the prediction is maximum.
+    # th_range = np.arange(0,2,0.001)
+    # # select th for which the accuracy of the prediction is maximum.
     def calc_acc(pd,nd,th):
         p = pd<th
         n = nd>th
         return (np.sum(n)+np.sum(p))/(len(n)+len(p))
-    res=[]
-    for th in th_range:
-        res.append(calc_acc(p,n,th))
-    res = np.array(res)
+    # res=[]
+    # for th in th_range:
+    #     res.append(calc_acc(p,n,th))
+    # res = np.array(res)
     
-    th = th_range[np.argmax(res)]
+    # th = th_range[np.argmax(res)]
+    th=np.percentile(p,99)
     acc_train = calc_acc(p,n,th)
     p,n= model.predict(ds.val)
     acc_val = calc_acc(p,n,th)
@@ -132,6 +119,6 @@ if __name__ == "__main__":
 
     task = [[2,4,8,12,16],[24,32,48],[64,96,128]]
     task = [[1,3,5,6,18,23,25],[7,9,10,11,19,22,26],[13,14,15,17,20,21,27]]
-    for output_shape in task[a.task]:
-        for i in range(8):
-            main(output_shape,i)
+    # for output_shape in task[a.task]:
+    #     for i in range(8):
+    main(128,2)
