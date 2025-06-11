@@ -44,8 +44,7 @@ class EvaluateModel(tf.keras.Model):
 
 
 
-class CModel(tf.keras.Model):
-
+class ContrastModel(tf.keras.Model):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.loss_tracker = tf.keras.metrics.Mean(name="loss")
@@ -56,15 +55,9 @@ class CModel(tf.keras.Model):
     def predict_step(self,inputs):
         anchor_embed = self(inputs[0],training=False)
         test_embed = self(inputs[1],training=False)
-        y_true = tf.cast(inputs[2],tf.float32)
-
+        corr,ham,flag = tf.unstack(inputs[2], axis=-1)
         distances =tf.sqrt(tf.reduce_sum(tf.square(anchor_embed - test_embed), axis=1))
-
-        return tf.square(distances), y_true ## give back loss + correlation factor + raw_results
-
-    def extract_th(self,ds):
-        ## Implement this when there is a better view on the data
-        pass
+        return anchor_embed,test_embed, tf.square(distances), corr,flag, ham ## give back loss + correlation factor + raw_results
 
     @tf.function
     def train_step(self, inputs):
@@ -80,20 +73,8 @@ class CModel(tf.keras.Model):
         )
 
         self.loss_tracker.update_state(loss)
-
-
         return  {m.name: m.result() for m in self.metrics}
     
-
-    def _compute_loss_predict(self, inputs,training=True):
-        anchor_embed = self(inputs[0],training=training)
-        test_embed = self(inputs[1],training=training)
-        y_true = tf.cast(inputs[2],tf.float32)
-
-        distances =tf.sqrt(tf.reduce_sum(tf.square(anchor_embed - test_embed), axis=1))
-
-        return tf.square(distances), y_true, anchor_embed,test_embed
-
     @tf.function
     def test_step(self, inputs):
         loss = self._compute_loss(inputs)
@@ -103,13 +84,14 @@ class CModel(tf.keras.Model):
     def _compute_loss(self, inputs,training=True):
         anchor_embed = self(inputs[0],training=training)
         test_embed = self(inputs[1],training=training)
-        y_true = tf.cast(inputs[2],tf.float32)
+        corr,ham,flag = tf.unstack(inputs[2], axis=-1)
+        corr = tf.cast(flag,tf.float32)
 
         distances =tf.sqrt(tf.reduce_sum(tf.square(anchor_embed - test_embed), axis=1))
 
         # Contrastive loss calculation
-        positive_loss = y_true * tf.square( distances ) # For similar pairs (y=1)
-        negative_loss = (1-y_true) * tf.square( tf.maximum(self.margin - distances, 0))  # For dissimilar pairs (y=0)
+        positive_loss = corr * tf.square( distances ) # For similar pairs (y=1)
+        negative_loss = (1-corr) * tf.square( tf.maximum(self.margin - distances, 0))  # For dissimilar pairs (y=0)
         
         # Combine and compute the mean loss
         loss = tf.reduce_mean(positive_loss + negative_loss)
@@ -205,32 +187,12 @@ class Model_Base:
     def get_model(self,m=None):
         pass
 
-class BasicCNN(Model_Base):
-    """ The basic model oshea resnet """
-    def __init__(self,input_shape=512,output_shape=6,nr_layers=4,name='Base') -> None:
-        super().__init__(name=name)
-        
-        ## Inputs
-        self.input_layer = tf.keras.Input(shape=(input_shape,2))
-        self.reshaper = tf.keras.layers.Reshape((1,input_shape,2))
-        self.featEx = FeatureExtraction(nr_layers=nr_layers)
-        self.output= Exit(output_shape)
-    
-    def build(self):
-        x = self.reshaper(self.input_layer)
-        x= self.featEx(x)
-        out = self.output(x)
-        return out, 'Full_model'
-         
-    def get_model(self):
-        out,post = self.build()
-        return CModel(self.input_layer,out,name=post)
 
 class Base(Model_Base):
     """ The basic model oshea resnet """
-    def __init__(self,input_shape=512,output_shape=6,nr_layers=4,name='Base',Triple=True) -> None:
+    def __init__(self,input_shape=512,output_shape=6,nr_layers=4,name='Base',Triple=False) -> None:
         super().__init__(name=name)
-        self.out_model=TModel if Triple else CModel
+        self.out_model=TModel if Triple else ContrastModel
         
         ## Inputs
         self.input_layer = tf.keras.Input(shape=(input_shape,2))
@@ -240,14 +202,13 @@ class Base(Model_Base):
     
     def build(self):
         x = self.reshaper(self.input_layer)
-        x= self.featEx(x)
+        x = self.featEx(x)
         out = self.output(x)
         return out, 'Full_model'
          
     def get_model(self):
         out,post = self.build()
         return self.out_model(self.input_layer,out,name=post) 
-
 
 
 """Blocks"""
@@ -320,7 +281,8 @@ class Exit(tf.keras.Model):
         self.flatten = tf.keras.layers.Flatten()
         self.dense_layers = [tf.keras.layers.Dense(nn,activation=tf.keras.activations.selu) for nn in N_per_dense ]
         self.dropout = tf.keras.layers.Dropout(0.1)
-        self.output_layer = tf.keras.layers.Dense(output_shape,activation=tf.keras.activations.softmax, name="Exit")
+        # self.output_layer = tf.keras.layers.Dense(output_shape,activation=tf.keras.activations.softmax, name="Exit")
+        self.output_layer = tf.keras.layers.Dense(output_shape,activation=None, name="Exit")
 
     def call(self, input_tensor, training=False):
         x = self.flatten(input_tensor)
@@ -332,3 +294,72 @@ class Exit(tf.keras.Model):
 
     def get_output(self):
         return self.output_layer
+    
+
+# ==== 🔹 Positional Encoding (Important for Sequential Data) 🔹 ====
+class PositionalEncoding(tf.keras.layers.Layer):
+    def __init__(self, sequence_length, d_model):
+        super(PositionalEncoding, self).__init__()
+        self.sequence_length = sequence_length
+        self.d_model = d_model
+        self.pos_encoding = self.get_positional_encoding(sequence_length, d_model)
+
+    def get_positional_encoding(self, seq_len, d_model):
+        positions = np.arange(seq_len)[:, np.newaxis]
+        div_term = np.exp(np.arange(0, d_model, 2) * (-np.log(10000.0) / d_model))
+        pos_encoding = np.zeros((seq_len, d_model))
+        pos_encoding[:, 0::2] = np.sin(positions * div_term)
+        pos_encoding[:, 1::2] = np.cos(positions * div_term)
+        return tf.cast(pos_encoding[np.newaxis, ...], dtype=tf.float32)
+
+    def call(self, inputs):
+        return inputs + self.pos_encoding[:, :tf.shape(inputs)[1], :]
+
+# ==== 🔹 Transformer Block (Multi-Head Attention + Feedforward) 🔹 ====
+class TransformerBlock(tf.keras.layers.Layer):
+    def __init__(self, d_model, num_heads, dff, dropout_rate=0.1):
+        super(TransformerBlock, self).__init__()
+        self.mha = tf.keras.layers.MultiHeadAttention(num_heads=num_heads, key_dim=d_model)
+        self.ffn = tf.keras.Sequential([
+            tf.keras.layers.Dense(dff, activation='relu'),
+            tf.keras.layers.Dense(d_model)
+        ])
+        self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+        self.layernorm2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+        self.dropout1 = tf.keras.layers.Dropout(dropout_rate)
+        self.dropout2 = tf.keras.layers.Dropout(dropout_rate)
+
+    def call(self, inputs, training):
+        attn_output = self.mha(inputs, inputs, inputs)
+        attn_output = self.dropout1(attn_output, training=training)
+        out1 = self.layernorm1(inputs + attn_output)
+
+        ffn_output = self.ffn(out1)
+        ffn_output = self.dropout2(ffn_output, training=training)
+        return self.layernorm2(out1 + ffn_output)
+
+# ==== 🔹 Full Transformer Encoder Model 🔹 ====
+class TransformerEncoder(Model_Base):
+    def __init__(self, sequence_length, d_model, num_heads, dff, num_layers, dropout_rate=0.1, name='transfo'):
+        super().__init__(name=name)
+        self.input_layer = tf.keras.Input(shape=(sequence_length,2))
+        self.embedding = tf.keras.layers.Dense(d_model)  # Project IQ data to `d_model` size
+        self.pos_encoding = PositionalEncoding(sequence_length, d_model)
+        self.encoder_layers = [TransformerBlock(d_model, num_heads, dff, dropout_rate) for _ in range(num_layers)]
+        self.global_avg_pool = tf.keras.layers.GlobalAveragePooling1D()
+        self.output_layer = tf.keras.layers.Dense(d_model, activation=None)  # Output embedding
+
+    def build(self):
+        x = self.embedding(self.input_layer)
+        x = self.pos_encoding(x)
+        for encoder_layer in self.encoder_layers:
+            x = encoder_layer(x)
+        x = self.global_avg_pool(x)
+        out = self.output_layer(x) 
+        return out, 'Tranformer'  # Final embedding (before L2 normalization)
+    
+    def get_model(self):
+        out,post = self.build()
+        return ContrastModel(self.input_layer,out,name=post) 
+    
+
